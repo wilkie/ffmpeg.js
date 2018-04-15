@@ -16,6 +16,10 @@ COMMON_DECODERS = \
 	mp3 ac3 aac \
 	ass ssa srt webvtt
 
+FFMPEG_GIF_BC = build/ffmpeg-gif/ffmpeg.bc
+GIF_ENCODERS = png gif
+GIF_MUXERS = null
+
 WEBM_MUXERS = webm ogg null image2
 WEBM_ENCODERS = libvpx_vp8 libopus mjpeg
 FFMPEG_WEBM_BC = build/ffmpeg-webm/ffmpeg.bc
@@ -42,9 +46,10 @@ MP4_SHARED_DEPS = \
 	build/lame/dist/lib/libmp3lame.so \
 	build/x264/dist/lib/libx264.so
 
-all: webm mp4
+all: webm mp4 gif
 webm: ffmpeg-webm.js ffmpeg-worker-webm.js
 mp4: ffmpeg-mp4.js ffmpeg-worker-mp4.js
+gif: ffmpeg-gif.js ffmpeg-worker-gif.js
 
 clean: clean-js \
 	clean-freetype clean-fribidi clean-libass \
@@ -86,7 +91,7 @@ build/opus/dist/lib/libopus.so: build/opus/configure
 		--disable-rtcd \
 		--disable-intrinsics \
 		&& \
-	emmake make -j8 && \
+	emmake make && \
 	emmake make install
 
 build/freetype/builds/unix/configure:
@@ -111,7 +116,7 @@ build/freetype/dist/lib/libfreetype.so: build/freetype/builds/unix/configure
 		--without-png \
 		--without-harfbuzz \
 		&& \
-	emmake make -j8 && \
+	emmake make && \
 	emmake make install
 
 build/fribidi/configure:
@@ -129,7 +134,7 @@ build/fribidi/dist/lib/libfribidi.so: build/fribidi/configure
 		--disable-debug \
 		--without-glib \
 		&& \
-	emmake make -j8 && \
+	emmake make && \
 	emmake make install
 
 build/libass/configure:
@@ -147,7 +152,7 @@ build/libass/dist/lib/libass.so: build/libass/configure $(LIBASS_DEPS)
 		--disable-harfbuzz \
 		--disable-asm \
 		&& \
-	emmake make -j8 && \
+	emmake make && \
 	emmake make install
 
 build/libvpx/dist/lib/libvpx.so:
@@ -169,7 +174,7 @@ build/libvpx/dist/lib/libvpx.so:
 		--disable-vp8-decoder \
 		--disable-vp9 \
 		&& \
-	emmake make -j8 && \
+	emmake make && \
 	emmake make install
 
 build/lame/dist/lib/libmp3lame.so:
@@ -186,7 +191,7 @@ build/lame/dist/lib/libmp3lame.so:
 		--disable-decoder \
 		--disable-frontend \
 		&& \
-	emmake make -j8 && \
+	emmake make && \
 	emmake make install
 
 build/x264/dist/lib/libx264.so:
@@ -210,7 +215,7 @@ build/x264/dist/lib/libx264.so:
 		--disable-gpac \
 		--disable-lsmash \
 		&& \
-	emmake make -j8 && \
+	emmake make && \
 	emmake make install
 
 # TODO(Kagami): Emscripten documentation recommends to always use shared
@@ -263,6 +268,21 @@ FFMPEG_COMMON_ARGS = \
 	--disable-xlib \
 	--disable-zlib
 
+build/ffmpeg-gif/ffmpeg.bc:
+	cd build/ffmpeg-gif && \
+	git reset --hard && \
+	patch -p1 < ../ffmpeg-disable-arc4random.patch && \
+	patch -p1 < ../ffmpeg-default-font.patch && \
+	patch -p1 < ../ffmpeg-disable-monotonic.patch && \
+	EM_PKG_CONFIG_PATH=emconfigure ./configure \
+		$(FFMPEG_COMMON_ARGS) \
+		$(addprefix --enable-encoder=,$(GIF_ENCODERS)) \
+		$(addprefix --enable-muxer=,$(GIF_MUXERS)) \
+		--enable-filter=subtitles \
+		&& \
+	emmake make && \
+	cp ffmpeg ffmpeg.bc
+
 build/ffmpeg-webm/ffmpeg.bc: $(WEBM_SHARED_DEPS)
 	cd build/ffmpeg-webm && \
 	git reset --hard && \
@@ -280,7 +300,7 @@ build/ffmpeg-webm/ffmpeg.bc: $(WEBM_SHARED_DEPS)
 		--extra-cflags="-I../libvpx/dist/include" \
 		--extra-ldflags="-L../libvpx/dist/lib" \
 		&& \
-	emmake make -j8 && \
+	emmake make && \
 	cp ffmpeg ffmpeg.bc
 
 build/ffmpeg-mp4/ffmpeg.bc: $(MP4_SHARED_DEPS)
@@ -298,7 +318,7 @@ build/ffmpeg-mp4/ffmpeg.bc: $(MP4_SHARED_DEPS)
 		--extra-cflags="-I../lame/dist/include" \
 		--extra-ldflags="-L../lame/dist/lib" \
 		&& \
-	emmake make -j8 && \
+	emmake make && \
 	cp ffmpeg ffmpeg.bc
 
 # Compile bitcode to JavaScript.
@@ -329,5 +349,15 @@ ffmpeg-mp4.js: $(FFMPEG_MP4_BC) $(PRE_JS) $(POST_JS_SYNC)
 
 ffmpeg-worker-mp4.js: $(FFMPEG_MP4_BC) $(PRE_JS) $(POST_JS_WORKER)
 	emcc $(FFMPEG_MP4_BC) $(MP4_SHARED_DEPS) \
+		--post-js $(POST_JS_WORKER) \
+		$(EMCC_COMMON_ARGS)
+
+ffmpeg-gif.js: $(FFMPEG_GIF_BC) $(PRE_JS) $(POST_JS_SYNC)
+	emcc $(FFMPEG_GIF_BC) $(GIF_SHARED_DEPS) \
+		--post-js $(POST_JS_SYNC) \
+		$(EMCC_COMMON_ARGS)
+
+ffmpeg-worker-gif.js: $(FFMPEG_GIF_BC) $(PRE_JS) $(POST_JS_WORKER)
+	emcc $(FFMPEG_GIF_BC) $(GIF_SHARED_DEPS) \
 		--post-js $(POST_JS_WORKER) \
 		$(EMCC_COMMON_ARGS)
