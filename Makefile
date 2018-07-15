@@ -6,15 +6,29 @@ PRE_JS = build/pre.js
 POST_JS_SYNC = build/post-sync.js
 POST_JS_WORKER = build/post-worker.js
 
-COMMON_FILTERS = aresample scale crop overlay
-COMMON_DEMUXERS = matroska ogg avi mov flv mpegps image2 mp3 concat
+COMMON_FILTERS = aresample scale crop overlay fps palettegen paletteuse
+COMMON_DEMUXERS = matroska ogg avi mov flv mpegps image2 mp3 concat srt webvtt mov
 COMMON_DECODERS = \
 	vp8 vp9 theora \
 	mpeg2video mpeg4 h264 hevc \
 	png mjpeg \
 	vorbis opus \
 	mp3 ac3 aac \
-	ass ssa srt webvtt
+	ass ssa srt webvtt dvdsub gif text mov
+
+GIF_MUXERS = null image2 gif srt ass webvtt mov
+GIF_ENCODERS = png gif srt ssa webvtt text subrip mov
+FFMPEG_GIF_BC = build/ffmpeg-gif/ffmpeg.bc
+LIBASS_PC_PATH = ../fribidi/dist/lib/pkgconfig
+FFMPEG_GIF_PC_PATH_ = \
+	$(LIBASS_PC_PATH):\
+	../libass/dist/lib/pkgconfig
+FFMPEG_GIF_PC_PATH = $(subst : ,:,$(FFMPEG_GIF_PC_PATH_))
+LIBASS_DEPS = \
+	build/fribidi/dist/lib/libfribidi.so
+GIF_SHARED_DEPS = \
+	$(LIBASS_DEPS) \
+	build/libass/dist/lib/libass.so
 
 FFMPEG_GIF_BC = build/ffmpeg-gif/ffmpeg.bc
 GIF_ENCODERS = png gif
@@ -23,15 +37,14 @@ GIF_MUXERS = null
 WEBM_MUXERS = webm ogg null image2
 WEBM_ENCODERS = libvpx_vp8 libopus mjpeg
 FFMPEG_WEBM_BC = build/ffmpeg-webm/ffmpeg.bc
-LIBASS_PC_PATH = ../freetype/dist/lib/pkgconfig:../fribidi/dist/lib/pkgconfig
+LIBASS_PC_PATH = ../fribidi/dist/lib/pkgconfig
 FFMPEG_WEBM_PC_PATH_ = \
 	$(LIBASS_PC_PATH):\
 	../libass/dist/lib/pkgconfig:\
 	../opus/dist/lib/pkgconfig
 FFMPEG_WEBM_PC_PATH = $(subst : ,:,$(FFMPEG_WEBM_PC_PATH_))
 LIBASS_DEPS = \
-	build/fribidi/dist/lib/libfribidi.so \
-	build/freetype/dist/lib/libfreetype.so
+	build/fribidi/dist/lib/libfribidi.so
 WEBM_SHARED_DEPS = \
 	$(LIBASS_DEPS) \
 	build/libass/dist/lib/libass.so \
@@ -54,6 +67,7 @@ gif: ffmpeg-gif.js ffmpeg-worker-gif.js
 clean: clean-js \
 	clean-freetype clean-fribidi clean-libass \
 	clean-opus clean-libvpx clean-ffmpeg-webm \
+	clean-ffmpeg-gif \
 	clean-lame clean-x264 clean-ffmpeg-mp4
 clean-js:
 	rm -f -- ffmpeg*.js
@@ -71,6 +85,8 @@ clean-lame:
 	-cd build/lame && rm -rf dist && make clean
 clean-x264:
 	-cd build/x264 && rm -rf dist && make clean
+clean-ffmpeg-gif:
+	-cd build/ffmpeg-gif && rm -f ffmpeg.bc && make clean
 clean-ffmpeg-webm:
 	-cd build/ffmpeg-webm && rm -f ffmpeg.bc && make clean
 clean-ffmpeg-mp4:
@@ -142,14 +158,13 @@ build/libass/configure:
 
 build/libass/dist/lib/libass.so: build/libass/configure $(LIBASS_DEPS)
 	cd build/libass && \
-	EM_PKG_CONFIG_PATH=$(LIBASS_PC_PATH) emconfigure ./configure \
-		CFLAGS="-O3" \
+		EM_PKG_CONFIG_PATH=$(LIBASS_PC_PATH) FREETYPE_CFLAGS="" FREETYPE_LIBS="-lfreetype" emconfigure ./configure \
+		CFLAGS="-O3 -s USE_FREETYPE=1 -s USE_HARFBUZZ=1" \
 		--prefix="$$(pwd)/dist" \
 		--disable-static \
 		--disable-enca \
 		--disable-fontconfig \
 		--disable-require-system-font-provider \
-		--disable-harfbuzz \
 		--disable-asm \
 		&& \
 	emmake make && \
@@ -257,7 +272,7 @@ FFMPEG_COMMON_ARGS = \
 	--disable-vdpau \
 	$(addprefix --enable-decoder=,$(COMMON_DECODERS)) \
 	$(addprefix --enable-demuxer=,$(COMMON_DEMUXERS)) \
-	--enable-protocol=file \
+	--enable-protocol=file,pipe \
 	$(addprefix --enable-filter=,$(COMMON_FILTERS)) \
 	--disable-bzlib \
 	--disable-iconv \
@@ -265,8 +280,23 @@ FFMPEG_COMMON_ARGS = \
 	--disable-lzma \
 	--disable-sdl \
 	--disable-securetransport \
-	--disable-xlib \
-	--disable-zlib
+	--disable-xlib
+
+build/ffmpeg-gif/ffmpeg.bc: $(GIF_SHARED_DEPS)
+	cd build/ffmpeg-gif && \
+	git reset --hard && \
+	patch -p1 < ../ffmpeg-disable-arc4random.patch && \
+	patch -p1 < ../ffmpeg-default-font.patch && \
+	patch -p1 < ../ffmpeg-disable-monotonic.patch && \
+	EM_PKG_CONFIG_PATH=$(FFMPEG_GIF_PC_PATH) FREETYPE_CFLAGS="" FREETYPE_LIBS="-lfreetype" emconfigure ./configure \
+		$(FFMPEG_COMMON_ARGS) \
+		$(addprefix --enable-encoder=,$(GIF_ENCODERS)) \
+		$(addprefix --enable-muxer=,$(GIF_MUXERS)) \
+		--enable-filter=subtitles \
+		--enable-libass \
+		&& \
+	emmake make && \
+	cp ffmpeg ffmpeg.bc
 
 build/ffmpeg-gif/ffmpeg.bc:
 	cd build/ffmpeg-gif && \
@@ -326,11 +356,36 @@ build/ffmpeg-mp4/ffmpeg.bc: $(MP4_SHARED_DEPS)
 # for simple tests and 32M tends to run slower than 64M.
 EMCC_COMMON_ARGS = \
 	--closure 1 \
+	-s USE_FREETYPE=1 -s USE_HARFBUZZ=1 \
 	-s TOTAL_MEMORY=67108864 \
 	-s OUTLINING_LIMIT=20000 \
 	-O3 --memory-init-file 0 \
 	--pre-js $(PRE_JS) \
 	-o $@
+
+EMCC_WASM_COMMON_ARGS = \
+	-v -s TOTAL_MEMORY=67108864 \
+	-O3 \
+	-s WASM=1 \
+	-s "BINARYEN_METHOD='native-wasm'" \
+	-s ALLOW_MEMORY_GROWTH=1 \
+	--pre-js $(PRE_JS) \
+	-o $@
+
+ffmpeg-gif.js: $(FFMPEG_GIF_BC) $(PRE_JS) $(POST_JS_SYNC)
+	emcc $(FFMPEG_GIF_BC) $(GIF_SHARED_DEPS) \
+		--post-js $(POST_JS_SYNC) \
+		$(EMCC_COMMON_ARGS)
+
+ffmpeg-worker-gif.js: $(FFMPEG_GIF_BC) $(PRE_JS) $(POST_JS_WORKER)
+	emcc $(FFMPEG_GIF_BC) $(GIF_SHARED_DEPS) \
+		--post-js $(POST_JS_WORKER) \
+		$(EMCC_COMMON_ARGS)
+
+ffmpeg-worker-wasm-gif.js: $(FFMPEG_GIF_BC) $(PRE_JS) $(POST_JS_WORKER)
+	emcc $(FFMPEG_GIF_BC) $(GIF_SHARED_DEPS) \
+		--post-js $(POST_JS_WORKER) \
+		$(EMCC_WASM_COMMON_ARGS)
 
 ffmpeg-webm.js: $(FFMPEG_WEBM_BC) $(PRE_JS) $(POST_JS_SYNC)
 	emcc $(FFMPEG_WEBM_BC) $(WEBM_SHARED_DEPS) \

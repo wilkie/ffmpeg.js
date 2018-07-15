@@ -8,7 +8,7 @@ self.onmessage = function(e) {
     var buf = [];
     return function(ch, exit) {
       if (exit && buf.length) return cb(__ffmpegjs_utf8ToStr(buf, 0));
-      if (ch === 10 || ch === 13) {
+      if (ch === 10) {
         cb(__ffmpegjs_utf8ToStr(buf, 0));
         buf = [];
       } else if (ch !== 0) {
